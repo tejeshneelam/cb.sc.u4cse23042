@@ -11,7 +11,7 @@ REST API Endpoints
 1. Fetch Notifications
 Endpoint: GET /api/v1/notifications
 Headers: 
-Authorization: Bearer <access_token>
+Authorization: Bearer <eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJNYXBDbGFpbXMiOnsiYXVkIjoiaHR0cDovLzIwLjI0NC41Ni4xNDQvZXZhbHVhdGlvbi1zZXJ2aWNlIiwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwiZXhwIjoxNzc4MDU5MTE1LCJpYXQiOjE3NzgwNTgyMTUsImlzcyI6IkFmZm9yZCBNZWRpY2FsIFRlY2hub2xvZ2llcyBQcml2YXRlIExpbWl0ZWQiLCJqdGkiOiI5ZmFhNWJmOS0wOGNmLTQxOWQtYTZiZC1kZDNkN2JmNDc0ZjciLCJsb2NhbGUiOiJlbi1JTiIsIm5hbWUiOiJuZWVsYW0gbmFnYSBuYXJlbiB0ZWplc2giLCJzdWIiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYifSwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwibmFtZSI6Im5lZWxhbSBuYWdhIG5hcmVuIHRlamVzaCIsInJvbGxObyI6ImNiLnNjLnU0Y3NlMjMwNDIiLCJhY2Nlc3NDb2RlIjoiUFRCTW1RIiwiY2xpZW50SUQiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYiLCJjbGllbnRTZWNyZXQiOiJoS1BSVG5GZ1dHUHVwZnR4In0.XOAZ2drkeMR7egDmrkrq1KPU6HnFJLpLZGaijcArmi8>
 Accept: application/json
 
 Request Query Parameters:
@@ -33,7 +33,7 @@ data:
 2. Mark Notification as Read
 Endpoint: PATCH /api/v1/notifications/:id/read
 Headers: 
-Authorization: Bearer <access_token>
+Authorization: Bearer <eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJNYXBDbGFpbXMiOnsiYXVkIjoiaHR0cDovLzIwLjI0NC41Ni4xNDQvZXZhbHVhdGlvbi1zZXJ2aWNlIiwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwiZXhwIjoxNzc4MDU5MTE1LCJpYXQiOjE3NzgwNTgyMTUsImlzcyI6IkFmZm9yZCBNZWRpY2FsIFRlY2hub2xvZ2llcyBQcml2YXRlIExpbWl0ZWQiLCJqdGkiOiI5ZmFhNWJmOS0wOGNmLTQxOWQtYTZiZC1kZDNkN2JmNDc0ZjciLCJsb2NhbGUiOiJlbi1JTiIsIm5hbWUiOiJuZWVsYW0gbmFnYSBuYXJlbiB0ZWplc2giLCJzdWIiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYifSwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwibmFtZSI6Im5lZWxhbSBuYWdhIG5hcmVuIHRlamVzaCIsInJvbGxObyI6ImNiLnNjLnU0Y3NlMjMwNDIiLCJhY2Nlc3NDb2RlIjoiUFRCTW1RIiwiY2xpZW50SUQiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYiLCJjbGllbnRTZWNyZXQiOiJoS1BSVG5GZ1dHUHVwZnR4In0.XOAZ2drkeMR7egDmrkrq1KPU6HnFJLpLZGaijcArmi8>
 Content-Type: application/json
 
 Request Body: Empty
@@ -162,3 +162,21 @@ function process_email_worker(email_job):
         send_email(email_job.student_id, email_job.message)
     except APIError:
         MessageQueue.retry(email_job, delay="5m")
+
+
+Stage 6
+
+Approach for Priority Inbox
+To construct the priority inbox, we sort notifications primarily by the predefined weight: Placement (3) > Result (2) > Event (1).
+If two notifications have the exact same weight (e.g., both are Results), we use the Timestamp for tie-breaking so that the most recent ones appear first.
+
+Code Implementation
+A Node.js/TypeScript application was created to fetch the notifications from the endpoint, apply this sorting logic natively in memory, and select the top 10 items to display. See notification_app_be/src/index.ts for the actual running code.
+
+Handling New Notifications
+To maintain the top 10 notifications efficiently on the frontend/backend when new notifications keep coming in:
+- A Priority Queue (Min-Heap based on the sorting weights) of size 10 can be utilized.
+- Whenever a real-time event pushes a new notification, we quickly compare it to the minimum element of the Priority Queue.
+- If it has higher priority or recency than the smallest element, we replace it and re-heapify.
+This gives O(log 10) -> O(1) performance per new notification rather than re-sorting the whole list O(N log N).
+
