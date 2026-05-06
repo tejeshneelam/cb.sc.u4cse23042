@@ -3,88 +3,59 @@
 import React, { useEffect, useState } from 'react';
 import { 
   Container, Typography, Card, CardContent, Chip, 
-  CircularProgress, Box, Tabs, Tab
+  CircularProgress, Box, FormControl, InputLabel, Select, MenuItem, Button
 } from '@mui/material';
 import axios from 'axios';
+import { Logger } from '../Logger';
 
-// Directly mimicking the logger interface logic inside the client component since the test requires 
-// the "logging_middleware" concept to be used. 
-// A frontend app wouldn't typically use a Node.JS commonJS package directly due to Next.js turbopack
-// cross-resolution restrictions on adjacent symlinked folders without extra webpack config.
-class Logger {
-    private stack: string;
-    private pkg: string;
-
-    constructor(stack: string, pkg: string) {
-        this.stack = stack;
-        this.pkg = pkg;
-    }
-
-    async log(level: 'info' | 'error' | 'warn' | 'debug', message: string) {
-        const payload = {
-            stack: this.stack,
-            level: level,
-            package: this.pkg,
-            message: message
-        };
-        try {
-            await axios.post('http://20.207.122.201/evaluation-service/log', payload, {
-                headers: { 
-                    'Authorization': `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') : 'dummy'}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-        } catch (e) {
-            // No console allowed
-        }
-    }
-    info(message: string) { this.log('info', message); }
-    error(message: string) { this.log('error', message); }
-}
-
-const logger = new Logger('frontend', 'component');
+const logger = new Logger('frontend', 'all_notifications');
 
 interface Notification {
   ID: string;
   Type: string;
   Message: string;
   Timestamp: string;
+  isRead?: boolean; // We add this locally to signify view status
 }
-
-const TYPE_WEIGHT: Record<string, number> = {
-  "Placement": 3,
-  "Result": 2,
-  "Event": 1
-};
 
 export default function Home() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tabValue, setTabValue] = useState(0);
+  const [filterType, setFilterType] = useState<string>('');
+
+  const fetchNotifications = async () => {
+    setLoading(true);
+    try {
+      const params: any = {};
+      if (filterType) params.notification_type = filterType;
+
+      const res = await axios.get('http://localhost:3001/api/v1/notifications', {
+        headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || 'DUMMY') },
+        params: params
+      });
+      // Attach local 'isRead = false' default indicator mapped over results
+      const mapped = (res.data.data.notifications || []).map((n: Notification) => ({
+        ...n,
+        isRead: false
+      }));
+      setNotifications(mapped);
+      logger.info(`Fetched all notifications with filter: ${filterType}`);
+    } catch (error: any) {
+      logger.error(`Failed to load notifications: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchNotifications = async () => {
-      try {
-        const res = await axios.get('http://localhost:3001/api/v1/notifications', {
-          headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || 'DUMMY') }
-        });
-        setNotifications(res.data.data.notifications || []);
-        logger.info("Successfully fetched notifications in React App");
-      } catch (error: any) {
-        logger.error(`Failed to load notifications: ${error.message}`);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchNotifications();
-  }, []);
+  }, [filterType]);
 
-  const sortedPriority = [...notifications].sort((a, b) => {
-    if (TYPE_WEIGHT[a.Type] !== TYPE_WEIGHT[b.Type]) {
-      return (TYPE_WEIGHT[b.Type] || 0) - (TYPE_WEIGHT[a.Type] || 0);
-    }
-    return new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime();
-  });
+  const markAsRead = (id: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setNotifications(prev => prev.map(n => n.ID === id ? { ...n, isRead: true } : n));
+    logger.info(`Triggered mark-as-read manually for Notification ID: ${id}`);
+  };
 
   const getChipColor = (type: string) => {
     if (type === 'Placement') return 'success';
@@ -92,19 +63,26 @@ export default function Home() {
     return 'info';
   };
 
-  const displayList = tabValue === 0 ? notifications : sortedPriority.slice(0, 10);
-
   return (
-    <Container maxWidth="sm" sx={{ mt: 5, pb: 5 }}>
-      <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold' }}>
-        Notifications
-      </Typography>
-      
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs value={tabValue} onChange={(e, val) => setTabValue(val)}>
-          <Tab label="All Notifications" onClick={() => logger.info("Switched to All Notifications tab")} />
-          <Tab label="Priority Inbox" onClick={() => logger.info("Switched to Priority Inbox tab")} />
-        </Tabs>
+    <Container maxWidth="md" sx={{ mt: 5, pb: 5 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+          All Notifications
+        </Typography>
+        
+        <FormControl size="small" sx={{ minWidth: 150 }}>
+          <InputLabel>Filter Type</InputLabel>
+          <Select
+            value={filterType}
+            label="Filter Type"
+            onChange={(e) => setFilterType(e.target.value)}
+          >
+            <MenuItem value=""><em>All Types</em></MenuItem>
+            <MenuItem value="Placement">Placement</MenuItem>
+            <MenuItem value="Result">Result</MenuItem>
+            <MenuItem value="Event">Event</MenuItem>
+          </Select>
+        </FormControl>
       </Box>
 
       {loading ? (
@@ -113,25 +91,42 @@ export default function Home() {
         </Box>
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {displayList.map(notif => (
-            <Card key={notif.ID} variant="outlined" sx={{ borderRadius: 2 }}>
+          {notifications.map(notif => (
+            <Card 
+              key={notif.ID} 
+              variant="outlined" 
+              onClick={(e) => markAsRead(notif.ID, e)}
+              sx={{ 
+                borderRadius: 2, 
+                cursor: 'pointer',
+                backgroundColor: notif.isRead ? '#ffffff' : '#f0f7ff',
+                borderColor: notif.isRead ? 'divider' : 'primary.main',
+                transition: '0.2s',
+                '&:hover': {
+                  boxShadow: 2
+                }
+              }}
+            >
               <CardContent>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                  <Chip 
-                    label={notif.Type} 
-                    color={getChipColor(notif.Type) as any} 
-                    size="small" 
-                  />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label={notif.Type} color={getChipColor(notif.Type) as any} size="small" />
+                    {!notif.isRead && (
+                      <Chip label="NEW" color="error" size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 'bold' }} />
+                    )}
+                  </Box>
                   <Typography variant="caption" color="text.secondary">
                     {new Date(notif.Timestamp).toLocaleString()}
                   </Typography>
                 </Box>
-                <Typography variant="body1">{notif.Message}</Typography>
+                <Typography variant="body1" sx={{ fontWeight: notif.isRead ? 'normal' : 500, color: notif.isRead ? 'text.secondary' : 'text.primary' }}>
+                  {notif.Message}
+                </Typography>
               </CardContent>
             </Card>
           ))}
-          {displayList.length === 0 && (
-            <Typography align="center" color="text.secondary">No notifications found.</Typography>
+          {notifications.length === 0 && (
+             <Box sx={{ p: 5, textAlign: 'center', color: 'text.secondary' }}>No notifications found for this filter.</Box>
           )}
         </Box>
       )}
