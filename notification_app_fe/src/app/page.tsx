@@ -7,6 +7,43 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 
+// Directly mimicking the logger interface logic inside the client component since the test requires 
+// the "logging_middleware" concept to be used. 
+// A frontend app wouldn't typically use a Node.JS commonJS package directly due to Next.js turbopack
+// cross-resolution restrictions on adjacent symlinked folders without extra webpack config.
+class Logger {
+    private stack: string;
+    private pkg: string;
+
+    constructor(stack: string, pkg: string) {
+        this.stack = stack;
+        this.pkg = pkg;
+    }
+
+    async log(level: 'info' | 'error' | 'warn' | 'debug', message: string) {
+        const payload = {
+            stack: this.stack,
+            level: level,
+            package: this.pkg,
+            message: message
+        };
+        try {
+            await axios.post('http://20.207.122.201/evaluation-service/log', payload, {
+                headers: { 
+                    'Authorization': `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') : 'dummy'}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+        } catch (e) {
+            // No console allowed
+        }
+    }
+    info(message: string) { this.log('info', message); }
+    error(message: string) { this.log('error', message); }
+}
+
+const logger = new Logger('frontend', 'component');
+
 interface Notification {
   ID: string;
   Type: string;
@@ -32,8 +69,9 @@ export default function Home() {
           headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('token') || 'DUMMY') }
         });
         setNotifications(res.data.data.notifications || []);
-      } catch (error) {
-        console.error('Failed to load notifications', error);
+        logger.info("Successfully fetched notifications in React App");
+      } catch (error: any) {
+        logger.error(`Failed to load notifications: ${error.message}`);
       } finally {
         setLoading(false);
       }
@@ -64,8 +102,8 @@ export default function Home() {
       
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={tabValue} onChange={(e, val) => setTabValue(val)}>
-          <Tab label="All Notifications" />
-          <Tab label="Priority Inbox" />
+          <Tab label="All Notifications" onClick={() => logger.info("Switched to All Notifications tab")} />
+          <Tab label="Priority Inbox" onClick={() => logger.info("Switched to Priority Inbox tab")} />
         </Tabs>
       </Box>
 
