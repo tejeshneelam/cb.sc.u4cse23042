@@ -1,38 +1,29 @@
+import express from 'express';
+import cors from 'cors';
 import axios from 'axios';
-const TYPE_WEIGHT = {
-    "Placement": 3,
-    "Result": 2,
-    "Event": 1
-};
-async function getTopNotifications(limit = 10, token = "DUMMY_TOKEN") {
+import { Logger } from 'logging_middleware';
+const logger = new Logger('backend', 'handler');
+const app = express();
+app.use(cors());
+app.use(express.json());
+const PORT = 3001;
+const mockNotifications = [
+    { ID: '1', Type: 'Placement', Message: 'CSX Corporation hiring', Timestamp: '2026-04-22 17:51:18', isRead: false },
+    { ID: '2', Type: 'Event', Message: 'farewell', Timestamp: '2026-04-22 17:51:06', isRead: true },
+    { ID: '3', Type: 'Result', Message: 'mid-sem', Timestamp: '2026-04-22 17:50:54', isRead: false }
+];
+app.get('/api/v1/notifications', async (req, res) => {
     try {
+        const auth = req.headers.authorization;
         const response = await axios.get('http://20.207.122.201/evaluation-service/notifications', {
-            headers: {
-                "Authorization": `Bearer ${token}`
-            }
+            headers: { Authorization: auth || 'Bearer DUMMY' }
         });
-        let notifications = response.data.notifications;
-        notifications.sort((a, b) => {
-            if (TYPE_WEIGHT[a.Type] !== TYPE_WEIGHT[b.Type]) {
-                return TYPE_WEIGHT[b.Type] - TYPE_WEIGHT[a.Type];
-            }
-            else {
-                return new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime();
-            }
-        });
-        const topN = notifications.slice(0, limit);
-        console.log(`Top ${limit} Notifications:`);
-        console.table(topN);
+        logger.info('Fetched notifications successfully');
+        res.json({ success: true, data: { notifications: response.data.notifications } });
     }
-    catch (error) {
-        console.error("Failed to fetch notifications:");
-        if (error.response) {
-            console.error(error.response.status, error.response.data);
-        }
-        else {
-            console.error(error.message);
-        }
+    catch (err) {
+        logger.error(`Failed to fetch from real API: ${err.message}`);
+        res.json({ success: true, data: { notifications: mockNotifications }, _mock: true });
     }
-}
-// Replace DUMMY_TOKEN with your actual token
-getTopNotifications(10, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJNYXBDbGFpbXMiOnsiYXVkIjoiaHR0cDovLzIwLjI0NC41Ni4xNDQvZXZhbHVhdGlvbi1zZXJ2aWNlIiwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwiZXhwIjoxNzc4MDU5MTE1LCJpYXQiOjE3NzgwNTgyMTUsImlzcyI6IkFmZm9yZCBNZWRpY2FsIFRlY2hub2xvZ2llcyBQcml2YXRlIExpbWl0ZWQiLCJqdGkiOiI5ZmFhNWJmOS0wOGNmLTQxOWQtYTZiZC1kZDNkN2JmNDc0ZjciLCJsb2NhbGUiOiJlbi1JTiIsIm5hbWUiOiJuZWVsYW0gbmFnYSBuYXJlbiB0ZWplc2giLCJzdWIiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYifSwiZW1haWwiOiJubm50ZWplc2hAZ21haWwuY29tIiwibmFtZSI6Im5lZWxhbSBuYWdhIG5hcmVuIHRlamVzaCIsInJvbGxObyI6ImNiLnNjLnU0Y3NlMjMwNDIiLCJhY2Nlc3NDb2RlIjoiUFRCTW1RIiwiY2xpZW50SUQiOiJjMWI1OWQ4Zi1lMjVjLTRhNWQtOTc1Zi1hOWNiZTZjZjhkNmYiLCJjbGllbnRTZWNyZXQiOiJoS1BSVG5GZ1dHUHVwZnR4In0.XOAZ2drkeMR7egDmrkrq1KPU6HnFJLpLZGaijcArmi8");
+});
+app.listen(PORT, () => logger.info(`Backend running on http://localhost:${PORT}`));
