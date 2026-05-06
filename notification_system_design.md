@@ -169,16 +169,154 @@ Approach for Priority Inbox
 To construct the priority inbox, we sort notifications primarily by the predefined weight: Placement (3) > Result (2) > Event (1).
 If two notifications have the exact same weight (e.g., both are Results), we use the Timestamp for tie-breaking so that the most recent ones appear first.
 
-Code Implementation
-A Node.js/TypeScript application was created to fetch the notifications from the endpoint, apply this sorting logic natively in memory, and select the top 10 items to display. See notification_app_be/src/index.ts for the actual running code.
+Exact TypeScript Code
+The actual functioning code file is available at notification_app_be/src/stage6PriorityTop10.ts. It fetches notifications from the provided API, filters unread notifications, sorts them by priority weight and recency, and returns the top 10.
+
+```ts
+import axios from 'axios';
+import { fileURLToPath } from 'node:url';
+
+type NotificationType = 'Placement' | 'Result' | 'Event';
+
+type RawNotification = Record<string, unknown>;
+
+interface ApiResponse {
+    data?: {
+        notifications?: RawNotification[];
+    };
+    notifications?: RawNotification[];
+}
+
+export interface PriorityNotification {
+    id: string;
+    type: NotificationType;
+    message: string;
+    timestamp: string;
+    isRead: boolean;
+}
+
+const NOTIFICATION_API_URL = 'http://20.207.122.201/evaluation-service/notifications';
+
+const TYPE_WEIGHT: Record<NotificationType, number> = {
+    Placement: 3,
+    Result: 2,
+    Event: 1
+};
+
+const normalizeType = (value: unknown): NotificationType | null => {
+    const type = String(value || '').toLowerCase();
+
+    if (type === 'placement') return 'Placement';
+    if (type === 'result') return 'Result';
+    if (type === 'event') return 'Event';
+    return null;
+};
+
+const readBoolean = (value: unknown) => value === true || value === 'true';
+
+const normalizeNotification = (raw: RawNotification): PriorityNotification | null => {
+    const type = normalizeType(raw.type ?? raw.Type ?? raw.notification_type ?? raw.notificationType);
+    const id = String(raw.id ?? raw.ID ?? raw.notification_id ?? raw.notificationId ?? '');
+    const message = String(raw.message ?? raw.Message ?? '');
+    const timestamp = String(raw.timestamp ?? raw.Timestamp ?? raw.created_at ?? raw.createdAt ?? '');
+
+    if (!id || !type || !message || Number.isNaN(Date.parse(timestamp))) {
+        return null;
+    }
+
+    return {
+        id,
+        type,
+        message,
+        timestamp,
+        isRead: readBoolean(raw.is_read ?? raw.isRead)
+    };
+};
+
+export const comparePriority = (a: PriorityNotification, b: PriorityNotification) => {
+    const weightDifference = TYPE_WEIGHT[b.type] - TYPE_WEIGHT[a.type];
+    if (weightDifference !== 0) return weightDifference;
+
+    return Date.parse(b.timestamp) - Date.parse(a.timestamp);
+};
+
+export const getTopPriorityNotifications = async (
+    authToken: string,
+    topN = 10,
+    fetchLimit = 100
+) => {
+    const response = await axios.get<ApiResponse>(NOTIFICATION_API_URL, {
+        headers: { Authorization: authToken },
+        params: { limit: fetchLimit }
+    });
+
+    const rawNotifications = response.data.data?.notifications ?? response.data.notifications ?? [];
+
+    return rawNotifications
+        .map(normalizeNotification)
+        .filter((notification): notification is PriorityNotification => Boolean(notification))
+        .filter(notification => !notification.isRead)
+        .sort(comparePriority)
+        .slice(0, topN);
+};
+
+export class TopPriorityWindow {
+    private readonly maxSize: number;
+    private notifications: PriorityNotification[] = [];
+
+    constructor(maxSize = 10) {
+        this.maxSize = maxSize;
+    }
+
+    upsert(notification: PriorityNotification) {
+        this.notifications = this.notifications.filter(item => item.id !== notification.id);
+
+        if (notification.isRead) {
+            return;
+        }
+
+        if (this.notifications.length < this.maxSize) {
+            this.notifications.push(notification);
+            this.notifications.sort(comparePriority);
+            return;
+        }
+
+        const lowestPriorityItem = this.notifications[this.notifications.length - 1];
+        if (comparePriority(notification, lowestPriorityItem) < 0) {
+            this.notifications[this.notifications.length - 1] = notification;
+            this.notifications.sort(comparePriority);
+        }
+    }
+
+    list() {
+        return [...this.notifications].sort(comparePriority);
+    }
+}
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+    const rawToken = process.env.AFFORDMED_TOKEN || 'Bearer DUMMY';
+    const authToken = rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`;
+
+    getTopPriorityNotifications(authToken)
+        .then(notifications => {
+            console.table(notifications.map((notification, index) => ({
+                rank: index + 1,
+                type: notification.type,
+                message: notification.message,
+                timestamp: notification.timestamp
+            })));
+        })
+        .catch(error => {
+            console.error(getErrorMessage(error));
+            process.exitCode = 1;
+        });
+}
+```
 
 Handling New Notifications
-To maintain the top 10 notifications efficiently on the frontend/backend when new notifications keep coming in:
-
-- A Priority Queue (Min-Heap based on the sorting weights) of size 10 can be utilized.
-- Whenever a real-time event pushes a new notification, we quickly compare it to the minimum element of the Priority Queue.
-- If it has higher priority or recency than the smallest element, we replace it and re-heapify.
-  This gives O(log 10) -> O(1) performance per new notification rather than re-sorting the whole list O(N log N).
+The `TopPriorityWindow` class above keeps only the best N unread notifications in memory. When a notification arrives, `upsert` removes any older copy of the same notification, ignores it if it is read, inserts it if there is space, or replaces the current lowest priority item only when the new item ranks higher. Because the window size is fixed at 10, the update cost is bounded and avoids sorting the full notification history on every event.
 
 
 Stage 7
@@ -194,4 +332,3 @@ To differentiate "new/unread" notifications from "already viewed" notifications 
 
 Handling Query Parameters
 The frontend accommodates API pagination and filtering limits seamlessly. The application fetches the /notifications endpoint securely, mapping over the results and injecting them into MUI Card structures.
-

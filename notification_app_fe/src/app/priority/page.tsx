@@ -7,15 +7,16 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 import { Logger } from '../../Logger';
+import {
+  expandSparseNotifications,
+  getViewedNotificationIds,
+  type NotificationRecord
+} from '../../notificationFixtures';
 
 const logger = new Logger('frontend', 'priority_inbox');
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-interface Notification {
-  ID: string;
-  Type: string;
-  Message: string;
-  Timestamp: string;
-}
+type Notification = NotificationRecord;
 
 const TYPE_WEIGHT: Record<string, number> = {
   "Placement": 3,
@@ -28,119 +29,152 @@ export default function PriorityInbox() {
   const [loading, setLoading] = useState(true);
   const [limit, setLimit] = useState<number>(10);
 
-  const fetchPriorityNotifications = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get('http://localhost:3001/api/v1/notifications', {
-        headers: { 'Authorization': 'Bearer ' + (typeof window !== 'undefined' ? localStorage.getItem('token') : 'DUMMY') },
-      });
-      const fetched = res.data.data.notifications || [];
-      fetched.sort((a: Notification, b: Notification) => {
-        if (TYPE_WEIGHT[a.Type] !== TYPE_WEIGHT[b.Type]) {
-          return (TYPE_WEIGHT[b.Type] || 0) - (TYPE_WEIGHT[a.Type] || 0);
-        }
-        return new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime();
-      });
-      
-      setNotifications(fetched);
-      logger.info(`Fetched and sorted Priority Notifications`);
-    } catch (error: any) {
-      logger.error(`Failed to load priority notifications: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let isCurrent = true;
+
+    const fetchPriorityNotifications = async () => {
+      try {
+        const res = await axios.get('http://localhost:3001/api/v1/notifications', {
+          headers: { 'Authorization': 'Bearer ' + (typeof window !== 'undefined' ? localStorage.getItem('token') : 'DUMMY') },
+        });
+        const viewedIds = getViewedNotificationIds();
+        const fetched = expandSparseNotifications(res.data.data.notifications || [])
+          .filter((notification: Notification) => !viewedIds.has(notification.ID));
+        fetched.sort((a: Notification, b: Notification) => {
+          if (TYPE_WEIGHT[a.Type] !== TYPE_WEIGHT[b.Type]) {
+            return (TYPE_WEIGHT[b.Type] || 0) - (TYPE_WEIGHT[a.Type] || 0);
+          }
+          return new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime();
+        });
+
+        if (isCurrent) {
+          setNotifications(fetched);
+        }
+        logger.info(`Fetched and sorted Priority Notifications`);
+      } catch (error: unknown) {
+        logger.error(`Failed to load priority notifications: ${getErrorMessage(error)}`);
+      } finally {
+        if (isCurrent) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchPriorityNotifications();
+
+    return () => {
+      isCurrent = false;
+    };
   }, []);
 
   const getTheme = (type: string) => {
-    if (type === 'Placement') return { color: '#00e676', bg: 'linear-gradient(135deg, #1b5e20 0%, #00e676 100%)' };
-    if (type === 'Result') return { color: '#ffea00', bg: 'linear-gradient(135deg, #f57f17 0%, #ffea00 100%)' };
-    return { color: '#00e5ff', bg: 'linear-gradient(135deg, #00b0ff 0%, #18ffff 100%)' };
+    if (type === 'Placement') return { color: '#047857', bg: '#d1fae5', border: '#34d399' };
+    if (type === 'Result') return { color: '#92400e', bg: '#fef3c7', border: '#fbbf24' };
+    return { color: '#075985', bg: '#e0f2fe', border: '#38bdf8' };
   };
 
   const displayList = notifications.slice(0, limit);
 
   return (
-    <Box sx={{ minHeight: '100vh', background: 'radial-gradient(circle at top right, #0d0a20, #000000)', color: 'white', pt: 5, pb: 10 }}>
+    <Box sx={{ minHeight: '100vh', background: '#f6f8fb', color: '#111827', pt: 5, pb: 10 }}>
       <Container maxWidth="md">
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, p: 3, borderRadius: '16px', background: 'rgba(255, 255, 255, 0.03)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)' }}>
-          <Typography variant="h4" sx={{ fontWeight: '900', background: '-webkit-linear-gradient(45deg, #7C4DFF 30%, #448AFF 90%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', textShadow: '0px 4px 20px rgba(68, 138, 255, 0.4)' }}>
-            Priority Inbox
-          </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'flex-start', sm: 'center' }, gap: 2, mb: 1, flexWrap: 'wrap' }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 900, color: '#111827', letterSpacing: 0 }}>
+              Priority Inbox
+            </Typography>
+            <Typography variant="body2" sx={{ color: '#6b7280', mt: 0.5 }}>
+              Unread updates sorted by placement, result, event, then recency
+            </Typography>
+          </Box>
           
-          <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel sx={{ color: 'rgba(255,255,255,0.7)' }}>Show Top</InputLabel>
+          <FormControl size="small" sx={{ minWidth: 180, background: '#ffffff' }}>
+            <InputLabel sx={{ color: '#6b7280' }}>Show Top</InputLabel>
             <Select
               value={limit}
               label="Show Top"
               onChange={(e) => setLimit(Number(e.target.value))}
-              sx={{ color: 'white', '.MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.3)' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'white' }, '.MuiSvgIcon-root ': { fill: "white !important" } }}
+              sx={{
+                color: '#111827',
+                borderRadius: '8px',
+                '.MuiOutlinedInput-notchedOutline': { borderColor: '#d1d5db' },
+                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#9ca3af' },
+                '.MuiSvgIcon-root ': { fill: '#4b5563 !important' }
+              }}
             >
-              <MenuItem value={5}>🔥 Top 5 Rank</MenuItem>
-              <MenuItem value={10}>🌟 Top 10 Rank</MenuItem>
-              <MenuItem value={15}>📊 Top 15 Rank</MenuItem>
-              <MenuItem value={20}>🌍 Top 20 Rank</MenuItem>
+              <MenuItem value={5}>Top 5 Rank</MenuItem>
+              <MenuItem value={10}>Top 10 Rank</MenuItem>
+              <MenuItem value={15}>Top 15 Rank</MenuItem>
+              <MenuItem value={20}>Top 20 Rank</MenuItem>
             </Select>
           </FormControl>
         </Box>
 
-        <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.4)', mb: 4, pl: 2, letterSpacing: '1px', textTransform: 'uppercase' }}>
-          Strictly sorted by Weight (Placement &gt; Result &gt; Event) and Recency
+        <Typography variant="subtitle2" sx={{ color: '#6b7280', mb: 4, letterSpacing: 0, textTransform: 'none' }}>
+          Showing {displayList.length} of {notifications.length} unread priority notifications
         </Typography>
 
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 10 }}>
-            <CircularProgress sx={{ color: '#7C4DFF' }} size={60} thickness={4} />
+            <CircularProgress sx={{ color: '#2563eb' }} size={48} thickness={4} />
           </Box>
         ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {displayList.map((notif, index) => (
               <Fade in timeout={500 + (index * 100)} key={notif.ID}>
                 <Card 
                   sx={{ 
-                    borderRadius: '16px', 
-                    background: 'rgba(20, 20, 30, 0.6)',
-                    backdropFilter: 'blur(10px)',
-                    border: '1px solid rgba(255,255,255,0.05)',
-                    transform: 'perspective(1000px) rotateX(0deg) rotateY(0deg)',
-                    transition: 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-                    position: 'relative',
-                    overflow: 'visible',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderLeft: `4px solid ${getTheme(notif.Type).border}`,
+                    borderLeftColor: getTheme(notif.Type).border,
+                    transition: 'border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                    boxShadow: '0 10px 24px rgba(15, 23, 42, 0.08)',
                     '&:hover': {
-                      transform: 'perspective(1000px) rotateX(2deg) rotateY(-2deg) scale(1.02)',
-                      boxShadow: `-10px 15px 30px -10px ${getTheme(notif.Type).color}50`,
-                      borderColor: getTheme(notif.Type).color
+                      transform: 'translateY(-2px)',
+                      boxShadow: '0 14px 30px rgba(15, 23, 42, 0.10)',
+                      borderColor: '#94a3b8',
+                      borderLeftColor: getTheme(notif.Type).border
                     }
                   }}
                 >
-                  <Box sx={{ position: 'absolute', top: '-2px', left: '-2px', right: '-2px', bottom: '-2px', background: getTheme(notif.Type).bg, zIndex: -1, borderRadius: '18px', filter: 'blur(8px)', opacity: 0.4 }} />
-
-                  <CardContent sx={{ position: 'relative', zIndex: 1, background: 'rgba(20,20,30,0.9)', borderRadius: '16px', p: 3 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                        <Typography variant="h4" sx={{ fontWeight: 900, color: 'rgba(255,255,255,0.1)', fontStyle: 'italic' }}>
+                        <Typography
+                          variant="h4"
+                          sx={{
+                            minWidth: 68,
+                            height: 48,
+                            borderRadius: '6px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 900,
+                            color: getTheme(notif.Type).color,
+                            background: getTheme(notif.Type).bg,
+                            border: `1px solid ${getTheme(notif.Type).border}`
+                          }}
+                        >
                           #{index + 1}
                         </Typography>
                         <Chip 
                           label={`${notif.Type.toUpperCase()} PRIORITY`} 
                           sx={{ 
-                            background: getTheme(notif.Type).bg, 
-                            color: '#000', 
+                            background: getTheme(notif.Type).bg,
+                            color: getTheme(notif.Type).color,
                             fontWeight: 900, 
-                            boxShadow: `0 0 15px ${getTheme(notif.Type).color}80`,
-                            border: 'none',
+                            border: `1px solid ${getTheme(notif.Type).border}`,
                             px: 1
                           }} 
                         />
                       </Box>
-                      <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)', fontWeight: 'bold' }}>
+                      <Typography variant="caption" sx={{ color: '#6b7280', fontWeight: 700 }}>
                         {new Date(notif.Timestamp).toLocaleString()}
                       </Typography>
                     </Box>
-                    <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff', letterSpacing: '0.3px', pl: { xs: 0, sm: 6 } }}>
+                    <Typography variant="h6" sx={{ fontWeight: 800, color: '#111827', letterSpacing: 0, pl: { xs: 0, sm: 6 } }}>
                       {notif.Message}
                     </Typography>
                   </CardContent>
@@ -148,7 +182,7 @@ export default function PriorityInbox() {
               </Fade>
             ))}
             {displayList.length === 0 && (
-               <Box sx={{ p: 5, textAlign: 'center', color: 'rgba(255,255,255,0.5)' }}>No priority queue found.</Box>
+               <Box sx={{ p: 5, textAlign: 'center', color: '#6b7280' }}>No unread priority notifications.</Box>
             )}
           </Box>
         )}

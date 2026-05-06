@@ -15,7 +15,7 @@ export class Logger {
                     'Content-Type': 'application/json'
                 }
             });
-        } catch (e) {}
+        } catch {}
     }
     info(message: string) { this.log('info', message); }
     error(message: string) { this.log('error', message); }
